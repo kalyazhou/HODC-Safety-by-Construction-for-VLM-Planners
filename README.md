@@ -15,7 +15,7 @@ Mode C routes
 
 CoT + HODC (five stages): CoT scene → objects → intent → HODC constraints → trajectory
 
-Simplified v2 (two stages)【testing】: semantics + geometry → constraint softening → [v, k] generation (engineering‑oriented refactor)
+Simplified v2 (two stages)【testing】: semantics + geometry → constraint softening → [v, k] generation
 
 HODC++ parsing & constraints: parse_hodc_json(...), apply_hodc_constraints(...), hodc_consistency_filter(...).
 
