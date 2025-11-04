@@ -24,5 +24,3 @@ Safety/comfort layer: collision pre‑check, two‑stage yielding/avoidance, bra
 Evaluation metrics: ADE@{1,2,3}s, FDE, Collision Rate, traffic‑rule constraint trigger rate, smoothness (jerk/curvature, etc.).
 
 Visualization & logging: alignment plots, trajectory plots, JSONL results, global statistics aggregation.
-
-Note on dependencies: Any references to modules like openemma.* are placeholders for upstream/private implementations.
