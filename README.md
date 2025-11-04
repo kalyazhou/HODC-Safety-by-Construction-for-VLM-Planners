@@ -1,4 +1,4 @@
-Status (⚠️ Important): This repository contains research outcomes. To respect third-party copyrights and proprietary code, it includes only my original contributions. Upstream/private modules (such as openemma.*, utils.*, etc.) are not distributed here. Therefore, this repository is not ready for immediate use out of the box.
+Status (⚠️ Important): This repository contains research outcomes. To respect third-party copyrights and proprietary code, it includes only my original contributions. Upstream/private modules (such as openemma.*, utils.*, etc.) are not distributed here.
 This repository focuses on the key reasoning and safety‑constraint components used in the thesis, specifically Mode C (BEV + HODC++) Mode B(BEV‑assisted + CoT reasoning) and the comparison baselines Mode A. It covers:
 
 VLM inference interface: vlm_inference(...) (OpenAI GPT; multi‑modal input; with rate‑limit handling & retries).
