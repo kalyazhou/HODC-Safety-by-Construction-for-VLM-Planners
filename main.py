@@ -52,12 +52,10 @@ TTL_LEN = OBS_LEN + FUT_LEN
 
 
 def should_update_summary(events, i, K=5):
-    """判断是否需要更新摘要"""
     return (i % K == 0) or events.get("novelty", False)
 
 
 def compress_summary(prev_json, scene_txt, obj_txt, intent_txt):
-    """用gpt-4o-mini压缩场景描述为短JSON"""
     import json as _json
 
     sys = "You compress driving scene text into a fixed JSON schema, no extras."
@@ -89,7 +87,6 @@ Return ONLY the JSON."""
 
 
 def detect_novelty(scene_desc, object_desc, intent_desc, prev_scene, prev_objects, prev_intent):
-    """检测场景新颖度"""
     events = {"novelty": False}
     if scene_desc != prev_scene or object_desc != prev_objects or intent_desc != prev_intent:
         events["novelty"] = True
@@ -97,7 +94,6 @@ def detect_novelty(scene_desc, object_desc, intent_desc, prev_scene, prev_object
 
 
 def img_bytes_to_jpeg_b64(img_bytes, target_side=320, quality=60):
-    """把原始图压缩成较小 JPEG，并返回 base64（TPM 主要跟像素有关）"""
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
@@ -115,8 +111,8 @@ def img_bytes_to_jpeg_b64(img_bytes, target_side=320, quality=60):
 
 def prepare_front_view_boxes(nusc, sample, ego_pose):
     """
-    准备前视检测框数据，用于投影到BEV
-    返回格式: [{'center': [x, y, z], 'size': [l, w, h], 'rotation': yaw, 'category': 'car'}, ...]
+    Prepare forward-looking detection box data for projection onto the BEV
+    Return format:: [{'center': [x, y, z], 'size': [l, w, h], 'rotation': yaw, 'category': 'car'}, ...]
     """
     front_view_boxes = []
     try:
@@ -264,13 +260,12 @@ def collect_agents_nus_with_vel(nusc, prev_sample_token, curr_sample_token, dt=0
 
 def filter_agents(agents, ego_pos, ego_heading, max_r=30.0, fov_deg=120, topk=20):
     """
-    仅取前方扇区（±60°）且30m内、Top-20最近
+    Only take the front sector (±60°) within 30m and the Top-20 nearest
     """
     out = []
     c, s = np.cos(ego_heading), np.sin(ego_heading)
     for a in agents:
         rel = a["pos_xy"] - ego_pos
-        # 前方坐标框
         x_f = c * rel[0] + s * rel[1]
         y_f = -s * rel[0] + c * rel[1]
         if x_f < 0:
@@ -283,19 +278,19 @@ def filter_agents(agents, ego_pos, ego_heading, max_r=30.0, fov_deg=120, topk=20
 
 
 def is_critical_agent(ego_traj, agent_pos, agent_vel, time_horizon=2.5, min_distance=2.0):
-    """判断agent是否与ego轨迹在未来2-3s有交叉"""
+    """Determine whether the agent's trajectory will intersect with the ego's trajectory within the next 2-3 seconds."""
     if len(ego_traj) == 0:
         return False
     
-    # 计算未来轨迹
+    # Calculate future trajectory
     ego_future_steps = min(int(time_horizon/0.5), len(ego_traj))  # 2.5s = 5步
     ego_future = ego_traj[:ego_future_steps]
     
-    # 计算agent未来轨迹
+    # Calculate agent future trajectory
     t = np.arange(ego_future_steps, dtype=np.float32) * 0.5
     agent_future = agent_pos[None, :] + t[:, None] * agent_vel[None, :]
     
-    # 计算最小距离
+    # Calculate the minimum distance
     min_distances = np.linalg.norm(ego_future - agent_future, axis=1)
     min_distance_achieved = np.min(min_distances)
     
@@ -303,7 +298,7 @@ def is_critical_agent(ego_traj, agent_pos, agent_vel, time_horizon=2.5, min_dist
 
 
 def filter_critical_agents(agents_states, ego_traj):
-    """只保留与ego轨迹有交叉风险的关键agent"""
+    """Only retain key agents posing a risk of intersecting with the ego trajectory."""
     critical_agents = []
     for agent in agents_states:
         if is_critical_agent(ego_traj, agent["pos_xy"], agent["vel_xy"]):
@@ -313,7 +308,7 @@ def filter_critical_agents(agents_states, ego_traj):
 
 def dynamic_collision_flag(pred_xy, agents_states, step=0.5, base_safety_radius=1.4, speed_gain=0.0, ttc_th=2.0, s_max=0.5):
     """
-    Check for dynamic collision with other agents - TTC基础安全半径
+    Check for dynamic collision with other agents 
     """
     if len(pred_xy) == 0 or not agents_states:
         return False
@@ -327,7 +322,7 @@ def dynamic_collision_flag(pred_xy, agents_states, step=0.5, base_safety_radius=
         vel = a["vel_xy"]
         a_traj = pos0[None, :] + t[:, None] * vel[None, :]
         
-        # TTC基础安全半径计算
+        # TTC Basic Safety Radius Calculation
         safety = np.zeros(T)
         for t_idx in range(T):
             ego_pos = pred_xy[t_idx]
@@ -337,13 +332,11 @@ def dynamic_collision_flag(pred_xy, agents_states, step=0.5, base_safety_radius=
             rel_pos = agent_pos - ego_pos
             rel_vel = vel - ego_vel
             
-            # 只考虑逼近方向的相对速度
             rel_speed_pos = np.dot(rel_vel, rel_pos) / (np.linalg.norm(rel_pos) + 1e-6)
-            rel_speed_pos = max(0, rel_speed_pos)  # 只对逼近方向增大半径
+            rel_speed_pos = max(0, rel_speed_pos)  
             
             ttc = np.linalg.norm(rel_pos) / (np.linalg.norm(rel_vel) + 1e-6)
             speed_factor = np.clip(rel_speed_pos / max(ttc, ttc_th), 0, s_max)
-            # ✅ speed_gain 对逼近速度项生效
             safety[t_idx] = base_safety_radius + (1.0 + float(speed_gain)) * speed_factor
         
         d = np.linalg.norm(pred_xy - a_traj, axis=1)
@@ -359,21 +352,19 @@ def dynamic_collision_flag(pred_xy, agents_states, step=0.5, base_safety_radius=
 
 
 def _safe_json_loads(txt: str):
-    """容错JSON解析，处理非标准/截断输出"""
+    """Fault-tolerant JSON parsing, handling non-standard/truncated output"""
     import json, re
     s = txt.strip()
-    # 取第一个完整 {...}
     l = s.find("{")
     r = s.rfind("}")
     if l == -1 or r == -1 or r <= l:
         raise ValueError("no JSON object found")
     s = s[l:r+1]
-    # 常见修复：nul/None/True/False、尾逗号
-    s = re.sub(r'\bnul\b', 'null', s)   # 截断的 'null'
+    s = re.sub(r'\bnul\b', 'null', s)   
     s = re.sub(r'\bNone\b', 'null', s)
     s = re.sub(r'\bTrue\b', 'true', s)
     s = re.sub(r'\bFalse\b', 'false', s)
-    s = re.sub(r',\s*([}\]])', r'\1', s)  # 去尾逗号
+    s = re.sub(r',\s*([}\]])', r'\1', s)  
     return json.loads(s)
 
 
@@ -383,9 +374,8 @@ def parse_hodc_json(hodc_text):
     """
     try:
         print(f"[DEBUG] HODC JSON to parse: {hodc_text[:200]}...")
-        hodc = _safe_json_loads(hodc_text)  # 用容错解析
+        hodc = _safe_json_loads(hodc_text)  
         
-        # 有些模型会把 v_bounds/k_bounds 放在顶层而不是 "HODC" 下
         H = hodc.get("HODC", hodc)
         v_bounds = H.get("v_bounds", [])
         k_bounds = H.get("k_bounds", [])
@@ -393,16 +383,14 @@ def parse_hodc_json(hodc_text):
         conflicts = hodc.get("conflicts", [])
         signals = hodc.get("signals", {})
         
-        # 转换为数组格式，与10步时间对齐
         time_steps = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
         
         v_bounds_array = []
         k_bounds_array = []
         
         for i, t in enumerate(time_steps):
-            # 查找对应时间的约束
-            v_min, v_max = 0.0, 12.0  # 默认值
-            k_min, k_max = -0.06, 0.06  # 真实曲率默认范围，别再用 ±6.0
+            v_min, v_max = 0.0, 12.0  
+            k_min, k_max = -0.06, 0.06  
             
             for bound in v_bounds:
                 if len(bound) >= 3 and abs(bound[0] - t) < 0.1:
@@ -411,7 +399,7 @@ def parse_hodc_json(hodc_text):
             
             for bound in k_bounds:
                 if len(bound) >= 3 and abs(bound[0] - t) < 0.1:
-                    k_min, k_max = bound[1] / 100.0, bound[2] / 100.0  # 转换为真实曲率单位
+                    k_min, k_max = bound[1] / 100.0, bound[2] / 100.0  
                     break
             
             v_bounds_array.append([v_min, v_max])
@@ -430,16 +418,16 @@ def parse_hodc_json(hodc_text):
 
 
 def progress_floor(speed_curvature_pred, hodc_constraints, prev_speed=None):
-    """后处理的进度下界器（只在有HODC时生效）"""
+    """Post-processing Progress Lower Bounder """
     import numpy as np
     v_bounds = hodc_constraints["v_bounds"]
     H = hodc_constraints.get("hodc", hodc_constraints)
     sig = hodc_constraints.get("signals") or ((H.get("signals") or {}) if isinstance(H, dict) else {})
     speed_limit = float(sig.get("speed_limit_mps")) if sig.get("speed_limit_mps") is not None else None
 
-    # 仅在"接近直线"且"无冲突窗口"时，轻推向上界的 70–85%
+    # Only when the trajectory is “nearly straight” and there is “no conflict window,” gently push the upper limit to 70–85%.
     mean_abs_k = float(np.mean([abs(k) for _, k in speed_curvature_pred])) if speed_curvature_pred else 0.0
-    straightish = mean_abs_k < 0.012  # 半径>~80m
+    straightish = mean_abs_k < 0.012  
     tl = (sig.get("tl_state") or "none").lower()
 
     for i, (v, k) in enumerate(speed_curvature_pred):
@@ -448,7 +436,7 @@ def progress_floor(speed_curvature_pred, hodc_constraints, prev_speed=None):
         if speed_limit is not None:
             ub = min(ub, speed_limit)
 
-        # 冲突窗口内不抬速
+        # Do not accelerate within the conflict window.
         has_conflict = False
         for c in hodc_constraints.get("conflicts", []):
             tw = c.get("time_window_s", [])
@@ -461,7 +449,7 @@ def progress_floor(speed_curvature_pred, hodc_constraints, prev_speed=None):
         if (tl in ["green", "none"]) and straightish and (not has_conflict):
             target = 0.7 * ub
             if prev_speed is not None:
-                target = max(target, 0.80 * prev_speed)  # 温和回升
+                target = max(target, 0.80 * prev_speed)  # Moderate recovery
             v = min(max(v, target), ub)
         else:
             v = min(max(v, vmin), ub)
@@ -473,7 +461,7 @@ def progress_floor(speed_curvature_pred, hodc_constraints, prev_speed=None):
 
 
 def smooth_speed_only(speed_curvature_pred, max_delta_v=1.2):
-    """每步限速变化量（m/s per 0.5s），不改曲率"""
+    """Speed change per step (m/s per 0.5s), without altering curvature"""
     if not speed_curvature_pred:
         return speed_curvature_pred
     out = [list(speed_curvature_pred[0])]
@@ -486,12 +474,11 @@ def smooth_speed_only(speed_curvature_pred, max_delta_v=1.2):
 
 
 def _sanitize_hodc_bounds(hodc):
-    """把 HODC 的 k_bounds 拉回物理可行区间（真实曲率 1/m），并自动纠正 10×/100× 标度错误"""
+    """Pull HODC's k_bounds back into the physically feasible range (true curvature 1/m) and automatically correct the 10×/1Pull HODC's k_bounds back into the physically feasible range (true curvature 1/m)"""
     import numpy as np
     kb = hodc.get("k_bounds", [])
     if not kb:
         return hodc
-    # 估计尺度
     mags = []
     for r in kb:
         if isinstance(r, (list, tuple)) and len(r) >= 2:
@@ -499,9 +486,9 @@ def _sanitize_hodc_bounds(hodc):
     abs_mid = np.median(mags) if mags else 0.0
 
     scale = 1.0
-    if abs_mid > 0.6:      # 典型 0.5~1.5（很大） → /10
+    if abs_mid > 0.6:      
         scale = 0.1
-    elif abs_mid > 0.2:    # 0.2~0.6（偏大） → /3
+    elif abs_mid > 0.2:   
         scale = 1/3.0
 
     new_kb = []
@@ -510,11 +497,10 @@ def _sanitize_hodc_bounds(hodc):
             new_kb.append([-0.08, 0.08])
             continue
         kmin, kmax = float(r[0]) * scale, float(r[1]) * scale
-        # 物理夹紧（真曲率）
         kmin, kmax = max(kmin, -0.12), min(kmax, 0.12)
         if kmin > kmax:
             kmin, kmax = kmax, kmin
-        if (kmax - kmin) < 0.01:  # 至少给 0.01 的带宽
+        if (kmax - kmin) < 0.01:  
             mid = 0.5 * (kmin + kmax)
             kmin, kmax = mid - 0.005, mid + 0.005
         new_kb.append([kmin, kmax])
@@ -523,7 +509,6 @@ def _sanitize_hodc_bounds(hodc):
 
 
 def is_signal_stable(curr, last):
-    """检查信号是否稳定"""
     if last is None or curr is None:
         return False
     keys = ("tl_state", "stopline_distance_m", "speed_limit_mps")
@@ -534,7 +519,6 @@ def compute_agent_delta(curr_agents, last_agents):
     try:
         if not curr_agents or not last_agents:
             return 1.0
-        # 简单：数量差/上一次数量
         return abs(len(curr_agents) - len(last_agents)) / max(1, len(last_agents))
     except Exception:
         return 1.0
@@ -544,15 +528,14 @@ def apply_length_boost(v_seq, k_seq, v_bounds, signals, min_d_to_agents, last_S)
     v_seq: (T,)
     v_bounds: (T,2)
     signals: dict, may contain 'speed_limit_mps'
-    last_S: 上一帧实际弧长（用于限制增幅）
+    last_S: Actual arc length of the previous frame (used to limit the increment)
     """
     v = np.asarray(v_seq, float).copy()
     k = np.asarray(k_seq, float)
 
-    # 1) 根据场景动态决定是否允许 boost
+    #Dynamically determine whether to allow boost based on the scenario
     speed_limit = signals.get("speed_limit_mps", None) if signals else None
     
-    # 处理v_bounds为列表的情况
     if v_bounds is not None and len(v_bounds) > 0:
         v_bounds_array = np.asarray(v_bounds, float)
         if v_bounds_array.ndim == 2 and v_bounds_array.shape[1] >= 2:
@@ -567,26 +550,26 @@ def apply_length_boost(v_seq, k_seq, v_bounds, signals, min_d_to_agents, last_S)
                  and signals["stopline_distance_m"] < 12.0)
     almost_straight = np.nanstd(k[:5]) < 1e-3
 
-    # 禁止增程的几种情况
+    # Situations Where Range Extenders Are Prohibited
     if near_agents or near_stop or head_vmax <= 2.5 or almost_straight:
-        # 不做任何 boost，直接回到约束
+        # Without any boost, directly return to the constraint.
         if v_bounds is not None and len(v_bounds) > 0:
             for i in range(min(len(v), len(v_bounds))):
                 if len(v_bounds[i]) >= 2:
                     v[i] = np.clip(v[i], 0.0, v_bounds[i][1])
         return v
 
-    # 2) 目标弧长（软约束）：不要超过上一帧的 1.07 倍；整体上限不超过 22m
+    # 2)Target arc length (soft constraint): Do not exceed 1.07 times the previous frame's value; overall upper limit not exceeding 22m
     S = float(np.sum(v) * 0.5)  # DT = 0.5
-    S_target = min(max(15.0, (last_S or S) * 1.03), 22.0)  # 软目标：15~22m 且每帧最多 +3%
+    S_target = min(max(15.0, (last_S or S) * 1.03), 22.0) 
 
     scale = S_target / max(S, 1e-6)
-    scale = np.clip(scale, 1.0, 1.10)  # **最多 +10%**
+    scale = np.clip(scale, 1.0, 1.10)  
     v *= scale
 
-    # 3) 严格尊重 HODC 与限速，再裁一遍
+    # 3) Strictly adhere to HODC and speed limits, then trim again.
     if speed_limit is not None:
-        v = np.minimum(v, speed_limit)     # 限速
+        v = np.minimum(v, speed_limit)     
     if v_bounds is not None and len(v_bounds) > 0:
         for i in range(min(len(v), len(v_bounds))):
             if len(v_bounds[i]) >= 2:
@@ -595,25 +578,25 @@ def apply_length_boost(v_seq, k_seq, v_bounds, signals, min_d_to_agents, last_S)
     return v
 
 def infer_k_bounds_from_bev(road_graph=None, lane_width=3.0):
-    """从BEV道路几何推断合理的曲率上限"""
+    """Determining a Reasonable Upper Limit for Curvature Based on BEV Road Geometry"""
     k_max = min(0.7 / lane_width, 0.06)
     k_min = -k_max
     return k_min, k_max
 
 def auto_rescale_curvature(k_seq, k_bounds, signals=None):
-    """把 k 自动重标到与 bounds 同量级；避免 3~5 这种明显越界。
-    规则：若 |k| 超过 head 上界的 3 倍，尝试 /100；最多尝试两次。
+    """Automatically relabel k to match bounds magnitude; avoid obvious out-of-bounds values like 3~5.
+Rule: If |k| exceeds 3 times the upper bound of head, attempt division by 100; limit to two attempts.
     """
     k = np.asarray(k_seq, float).copy()
     
-    # 动态设置曲率保底
+    # Dynamic Setting for Minimum Curvature
     tl_state = signals.get("tl_state", "none") if signals else "none"
     if tl_state == "none":
         k_min_floor, k_max_floor = infer_k_bounds_from_bev()
     else:
         k_min_floor, k_max_floor = -0.06, 0.06
     
-    # 取 head 的合理上界
+    # Obtain a reasonable upper bound for head
     if k_bounds is not None and len(k_bounds) > 0:
         kb = np.asarray(k_bounds[:5], float)
         if kb.ndim == 2 and kb.shape[1] >= 2:
@@ -727,9 +710,9 @@ def hodc_blend_adapter(v_hodc, k_hodc, v_b, k_b, signals, scene_consistency=1.0)
 
 def sanitize_curvature_scaled_seq(speed_curvature_pred, mode='default'):
     """
-    曲率序列自愈：自动缩放（/100,/10 等），tanh软饱和至物理上限，并做轻度平滑。
-    仅处理k，不改v。
-    mode='c_semantic': 对两阶段语义引导的C模式，减少削弱以保留VLM生成的曲率
+    Curvature Sequence Self-Healing: Auto-scaling (/100, /10, etc.), tanh soft-clipping to physical upper limit, with light smoothing.
+    Process k only; do not modify v.
+    mode=‘c_semantic’: For two-stage semantically guided C-mode, reduce weakening to preserve curvature generated by VLM.
     """
     if not speed_curvature_pred:
         return speed_curvature_pred
@@ -737,7 +720,6 @@ def sanitize_curvature_scaled_seq(speed_curvature_pred, mode='default'):
     out = [list(p) for p in speed_curvature_pred]
     k = np.asarray([p[1] for p in out], dtype=float)
     
-    # 自动缩放（检测×100等问题）
     for _ in range(3):
         if np.nanmax(np.abs(k)) > 0.6:
             k = k * 0.1
@@ -746,18 +728,17 @@ def sanitize_curvature_scaled_seq(speed_curvature_pred, mode='default'):
         else:
             break
     
-    # C模式语义引导：使用更宽松的限制，保留更多原始曲率
+    # C-mode semantic guidance: Employing more relaxed constraints to preserve greater original curvature
     if mode == 'c_semantic':
-        # 软饱和到±0.10（vs默认±0.08），保留更大曲率
+        # Soft saturation to ±0.10 (vs default ±0.08), preserving greater curvature
         k = 0.10 * np.tanh(k / max(1e-6, 0.10))
-        # 轻度平滑（0.85/0.15 vs默认0.7/0.3）
+        # Slightly smoother (0.85/0.15 vs default 0.7/0.3)
         if len(k) >= 3:
             k_s = k.copy()
             for i in range(1, len(k) - 1):
                 k_s[i] = 0.85 * k[i] + 0.15 * 0.5 * (k[i - 1] + k[i + 1])
             k = k_s
     else:
-        # 默认模式：标准处理
         k = 0.08 * np.tanh(k / max(1e-6, 0.08))
         if len(k) >= 3:
             k_s = k.copy()
@@ -811,7 +792,7 @@ def get_hodc_signals(hodc_constraints):
 
 def hodc_consistency_filter(hodc_data, history_buffer, min_consistency_frames=3):
     """
-    HODC一致性滤波：避免语义跳变（健壮性：容忍缺失字段/空历史）
+    HODC Consistency Filtering: Avoiding Semantic Discontinuities (Robustness: Tolerates Missing Fields/Empty History)
     """
     if not isinstance(hodc_data, dict):
         return hodc_data, 1.0
@@ -872,7 +853,7 @@ def hodc_consistency_filter(hodc_data, history_buffer, min_consistency_frames=3)
 def hysteresis_braking_controller(pred_traj, agents_for_check, base_safety_radius, speed_gain, 
                                  prev_brake_state, consecutive_unsafe_frames=0):
     """
-    软硬刹一体滞回预控：双阈值，先降曲率频率再软刹
+   Hybrid Brake Hysteresis Pre-control: Dual-threshold approach—first reduces curvature frequency, then initiates soft braking.
     """
     r_in = base_safety_radius * 1.2
     r_out = base_safety_radius * 1.8
@@ -910,7 +891,7 @@ def apply_curvature_frequency_reduction(k_seq, reduction_factor=0.7):
 
 
 def _inject_turn_template_if_flat(speed_curvature_pred, hodc_constraints):
-    """若 10 步曲率几乎全 0 且 HODC 指示转弯，则注入一个温和的钟形曲率模板"""
+    """If the 10-step curvature is nearly zero throughout and HODC indicates a turn, inject a gentle bell-shaped curvature template."""
     import numpy as np
     if not hodc_constraints or not speed_curvature_pred:
         return speed_curvature_pred
@@ -923,9 +904,9 @@ def _inject_turn_template_if_flat(speed_curvature_pred, hodc_constraints):
 
     ks = np.array([k for _, k in speed_curvature_pred], dtype=float)
     if np.max(np.abs(ks)) > 0.01:
-        return speed_curvature_pred  # 已经有明显转向
+        return speed_curvature_pred  
 
-    peak = 0.04  # 真曲率峰值
+    peak = 0.04 
     sign = +1 if "left" in mtype else -1
     t = np.arange(10)
     bell = peak * np.exp(-0.5 * ((t - 4.5) / 1.8) ** 2) * sign
@@ -1032,7 +1013,7 @@ def parse_multi_agent_info(object_description):
 
 def smooth_curvature_prediction(speed_curvature_pred, obs_ego_curvatures, mode=None):
     """
-    平滑曲率预测，确保符号连续性和弯道模板
+    Smooth curvature prediction, ensuring symbol continuity and curve templates
     """
     if mode == "C":
         return speed_curvature_pred
@@ -1062,7 +1043,7 @@ def smooth_curvature_prediction(speed_curvature_pred, obs_ego_curvatures, mode=N
 
 
 def select_frames_for_vlm(frames, keep=4):
-    """选择关键帧发送给VLM，减少API调用量"""
+    """Select keyframes to send to VLM, reducing API call volume"""
     if not frames:
         return []
     if keep <= 1:
@@ -1081,7 +1062,7 @@ def select_frames_for_vlm(frames, keep=4):
 
 def clamp_by_traffic_rules(vk, tl_state=None, dist_to_stopline_m=None, last_speed=None):
     """
-    根据交通规则对速度曲率进行后处理
+    Perform post-processing on speed curvature according to traffic regulations
     """
     STOP_TH = 8.0
     if not vk:
@@ -1427,16 +1408,16 @@ def DescribeOrUpdateIntent(obs_images, prev_intent=None, args=None):
 def GenerateMotion(obs_images, obs_waypoints, obs_velocities, obs_curvatures, given_intent, args=None):
     scene_description = object_description = intent_description = None
 
-    # 所有模式（A/B/C）都执行CoT三阶段，区别在于输入图像类型（前视 vs BEV）
+    # All modes (A/B/C) execute the CoT three-stage process, differing only in the input image type (forward view vs. BEV).
     if args.method in ("openemma", "chat"):
         key_frames = select_frames_for_vlm(obs_images, keep=4)
         
-        # Stage 1: Scene Description (前视或BEV，由prompt_mode和use_bev决定)
+        # Stage 1: Scene Description (Front view or BEV, determined by prompt_mode and use_bev)
         scene_description = SceneDescription(key_frames, args=args)
         
         # Stage 2: Object Description
-        # Mode A (前视): 使用全部前视关键帧
-        # Mode B/C (BEV): 混合前视+BEV (前视→BEV→BEV)
+        # Mode A (Forward View): Use all forward view keyframes
+        # Mode B/C (BEV): Hybrid Forward View + BEV (Forward View → BEV → BEV)
         if getattr(args, "use_bev", False) and len(obs_images) >= 3:
             front_key = obs_images[-1]
             bev_keys = obs_images[:-1]
@@ -1568,7 +1549,7 @@ if __name__ == "__main__":
         print(f"[Warn] Only GPT is supported in this trimmed script. Overriding --model-path={args.model_path} -> 'gpt'")
         args.model_path = "gpt"
 
-    # 消融研究逻辑
+    # Research Logic of Dissolution
     if args.ablation == "A":
         args.use_bev = False
         args.prompt_mode = "original"
@@ -1580,36 +1561,27 @@ if __name__ == "__main__":
         args.prompt_mode = "bev"
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    # 输出到E盘（D盘空间不足）
+
     out_dir = f"E:/OpenEMMA_Results/{args.model_path}_results/{args.method}/{ts}"
     os.makedirs(out_dir, exist_ok=True)
 
-    # 加载数据集
+    # Load the dataset
     nusc = NuScenes(version=args.version, dataroot=args.dataroot)
     
-    # 如果使用采样模式（扩展实验：100或200场景）
-    if args.use_sampled_200:
-        from smart_sampler import smart_sample_scenes, load_sampled_scenes
-        import os
         
         # 优先使用100场景采样（如果存在）
         sampling_file = None
-        if os.path.exists('sampled_scenes_100.json'):
-            sampling_file = 'sampled_scenes_100.json'
-            print("📄 发现100场景采样日志，直接加载...")
-        elif os.path.exists('sampled_scenes_200.json'):
-            sampling_file = 'sampled_scenes_200.json'
-            print("📄 发现200场景采样日志，直接加载...")
-        
+        if os.path.exists('sampled_scenes.json'):
+            sampling_file = 'sampled_scenes.json'
+    
+        elif os.path.exists('sampled_scenes_1.json'):
+            sampling_file = 'sampled_scenes_1.json'
+            
         if sampling_file:
             scenes = load_sampled_scenes(nusc, sampling_file)
         else:
-            # 默认生成100场景采样（更经济的选择）
-            print("🎲 首次采样，生成100场景（可后续扩展到200）...")
-            scenes = smart_sample_scenes(nusc, n_samples=100, seed=42)
-            # smart_sample_scenes会自动保存为 sampled_scenes_100.json
+            scenes = smart_sample_scenes(nusc, n_samples=1000, seed=42)
         
-        print(f"✅ 使用采样模式：{len(scenes)} 个场景（来自trainval）")
     else:
         scenes = nusc.scene
 
@@ -1622,19 +1594,11 @@ if __name__ == "__main__":
             nusc_map = NuScenesMap(dataroot=nusc.dataroot, map_name=location)
             print(f"BEV map loaded for location: {location}")
         except Exception as e:
-            print(f"❌ 严重错误: BEV地图加载失败: {e}")
-            print(f"Mode {args.ablation} 需要BEV地图才能正常工作！")
-            print("请检查以下问题：")
-            print("1. nuScenes数据集是否完整下载")
-            print("2. maps目录是否存在且包含地图文件")
-            print("3. 依赖库是否正确安装")
-            print("程序将退出...")
             exit(1)
 
     scenes = nusc.scene
     print(f"Number of scenes: {len(scenes)}")
 
-    # 全局统计变量
     all_scenes_ade1s = []
     all_scenes_ade2s = []
     all_scenes_ade3s = []
@@ -1642,15 +1606,12 @@ if __name__ == "__main__":
     all_scenes_collision_rate = []
     all_scenes_traffic_rule_rate = []
     
-    # 计算效率统计
     all_scenes_api_calls = []
     all_scenes_inference_time = []
     all_scenes_frames = []
     
-    # 详细场景记录（用于排名和分析）
     scene_details = []  # List of {name, ade1s, ade2s, ade3s, fde, collision, traffic_rule, frames}
     
-    # HODC++有效性统计（仅Mode C使用）
     hodc_stats = {
         'total_frames': 0,
         'fallback_count': 0,  # VLM违反约束，使用template的次数
@@ -1668,34 +1629,19 @@ if __name__ == "__main__":
         last_sample_token = scene["last_sample_token"]
         name = scene["name"]
         description = scene["description"]
-
-        # 过滤已知有问题的场景（车辆长时间静止导致曲率异常）
-        problematic_scenes = ['scene-0553', 'scene-0757', 'scene-1100']
-        if name in problematic_scenes:
-            print(f"⚠️  Skipping {name} (known data quality issue: vehicle stationary)")
-            continue
-        
-        # 只跑指定场景（保持你原有过滤逻辑）
-        # if name not in ["scene-0061"]:
-        #     continue
-
-        # 收集该场景的图像/位姿/标定
-        front_camera_images = []  # base64 列表（给 GPT）
+             
+        front_camera_images = []  
         ego_poses = []
         camera_params = []
-        sample_tokens = []  # 保存sample tokens用于多智能体数据
+        sample_tokens = []  
 
         curr = first_sample_token
         while True:
             sample = nusc.get("sample", curr)
             cam_front_data = nusc.get("sample_data", sample["data"]["CAM_FRONT"])
 
-            # 检查图片文件是否存在
             img_path = os.path.join(nusc.dataroot, cam_front_data["filename"])
             if not os.path.exists(img_path):
-                print(f"⚠️  警告: 图片文件不存在，跳过场景 {scene['name']}")
-                print(f"   缺失文件: {img_path}")
-                # 清空已收集的数据，跳过这个场景
                 front_camera_images = []
                 ego_poses = []
                 camera_params = []
@@ -1718,7 +1664,6 @@ if __name__ == "__main__":
         scene_length = len(front_camera_images)
         print(f"Scene {name} has {scene_length} frames")
 
-        # 如果场景被跳过（图片文件缺失），scene_length为0
         if scene_length == 0:
             print(f"Scene {name} was skipped due to missing image files")
             continue
@@ -1764,32 +1709,29 @@ if __name__ == "__main__":
         traffic_rule_clamped_count = 0
         total_inference_time = 0.0
         total_api_calls = 0
-        collision_detected_frames = 0  # 跟踪连续碰撞检测帧数
+        collision_detected_frames = 0  
 
-        # 滑窗缓存
         K = 5
         last_pred = None
         last_hodc_constraints = None
         last_hodc_json = None
         prev_scene = prev_objects = prev_intent_text = None
         
-        # 全局状态：用于跨帧决定是否禁用缓存
         prev_collision_unsafe = False
         
-        # 运行期状态
         planner_state = {}
         planner_state["last_k"] = None
         planner_state["scaled_this_frame"] = False
 
         for i in range(scene_length - TTL_LEN):
             # ---------------- per-frame init ----------------
-            # 避免跨帧沿用上一帧的评测轨迹/来源
+            # Avoid carrying over evaluation trajectories/sources from the previous frame across frames.
             eval_traj = None
             eval_traj_source = None
             planner_state["scaled_this_frame"] = False
-            # 确保B/非HODC路径下变量已定义，避免 NameError
+            # Ensure variables are defined under the B/non-HODC path to avoid NameError.
             hodc_constraints = None
-            # 初始化轨迹变量，确保所有模式都能访问
+            # Initialize trajectory variables to ensure all modes have access.
             pred_traj = None
             speed_curvature_pred = []
             # ------------------------------------------------
