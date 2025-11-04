@@ -42,7 +42,6 @@ from mode_c_cot import generate_mode_c_cot_prediction
 # ---- OpenAI client ----
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ========================= 全局缓存 =========================
 short_json = {"scene": {}, "agents": [], "intent": {}, "notes": ""}
 last_json_hash = None
 
@@ -1524,8 +1523,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataroot", type=str, default="datasets/NuScenes")
     parser.add_argument("--version", type=str, default="v1.0-mini", 
                         help="NuScenes version: v1.0-mini (10 scenes) or v1.0-trainval (850 scenes)")
-    parser.add_argument("--use-sampled-200", action="store_true", 
-                        help="使用智能采样的200个场景（需要version=v1.0-trainval）")
+    parser.add_argument("--use-sampled-200", action="store_true")
     parser.add_argument("--method", type=str, default="openemma")
     parser.add_argument("--use-bev", action="store_true", help="Use BEV representation instead of front camera")
     parser.add_argument("--bev-extent", type=float, default=50.0, help="BEV extent in meters")
@@ -1568,8 +1566,6 @@ if __name__ == "__main__":
     # Load the dataset
     nusc = NuScenes(version=args.version, dataroot=args.dataroot)
     
-        
-        # 优先使用100场景采样（如果存在）
         sampling_file = None
         if os.path.exists('sampled_scenes.json'):
             sampling_file = 'sampled_scenes.json'
@@ -1585,7 +1581,6 @@ if __name__ == "__main__":
     else:
         scenes = nusc.scene
 
-    # 加载BEV地图（如果使用BEV）
     nusc_map = None
     if args.use_bev:
         try:
@@ -1614,9 +1609,9 @@ if __name__ == "__main__":
     
     hodc_stats = {
         'total_frames': 0,
-        'fallback_count': 0,  # VLM违反约束，使用template的次数
+        'fallback_count': 0,  
         'maneuver_distribution': {},  # {straight: 10, left_turn: 5, ...}
-        'avg_curvature_deviation': []  # |k_actual - k_target|的列表
+        'avg_curvature_deviation': []  # |k_actual - k_target| list
     }
 
     for scene_idx, scene in enumerate(scenes):
@@ -1746,18 +1741,18 @@ if __name__ == "__main__":
 
             fut_start_world = obs_ego_traj_world[-1]
 
-            # A分支优化：强制2关键帧减少图像
+            # Branch A Optimization: Forced reduction of images at 2 keyframes
             if not args.use_bev:  # Ablation A
                 obs_images = select_frames_for_vlm(obs_images, keep=2)
                 print(f"[A-BRANCH] Frame {i}: Reduced to {len(obs_images)} keyframes")
 
-            # 计算当前帧 yaw_deg（用于 BEV 画线）
+            # Calculate current frame yaw_deg (for BEV line drawing)
             ego_pose_last = obs_ego_poses[-1]
             q_last = Quaternion(ego_pose_last["rotation"])
             yaw_rad_last, _, _ = q_last.yaw_pitch_roll
             yaw_deg_last = np.degrees(yaw_rad_last)
 
-            # BEV处理
+            # BEV processing
             if args.use_bev:
                 bev_images = []
                 for t in range(OBS_LEN):
@@ -1820,20 +1815,19 @@ if __name__ == "__main__":
             agents_states = filter_agents(agents_states, ego_pos_xy, ego_heading, max_r=25.0, fov_deg=90, topk=12)
             print(f"[planner] agents={len(agents_states)} (front ±45°, 25m, top-12)")
             
-            # C-MODE: 统一体集合
+            # C-MODE: Unified Entity Collection
             if isinstance(locals().get('pred_traj', None), np.ndarray) and pred_traj.size > 0:
                 critical_agents = filter_critical_agents(agents_states, pred_traj[:, :2])
             else:
                 critical_agents = []
             agents_for_check = critical_agents
 
-            # 规划：BEV or Front-view
+            # Planning: BEV or Front View
             if args.use_bev:
                 print("[planner] use BEV: True (E2E mode)")
-
-                # C模式：支持两种架构
-                # 1. Mode C v2: 简化的两阶段（默认）
-                # 2. Mode C CoT+HODC: 完整的5阶段（--use-cot-hodc）
+                # Mode C: Supports two architectures
+                # 1. Mode C v2: Simplified two-phase (default)
+                # 2. Mode C CoT+HODC: Full five-phase (--use-cot-hodc)
                 if args.method in ("openemma", "chat") and getattr(args, "prompt_mode", "original") == "bev":
                     use_cot_hodc = getattr(args, "use_cot_hodc", False)
                     
@@ -1852,7 +1846,6 @@ if __name__ == "__main__":
                         updated_intent = "Cached from previous frame"
                         print(f"[CACHE] Frame {i}: Using cached prediction")
                     else:
-                        # 准备输入
                         v_hist = np.linalg.norm(obs_ego_velocities[-3:], axis=1).tolist()
                         k_hist = obs_ego_curvatures[-3:].tolist()
                         history_vk = [[float(v), float(k)] for v, k in zip(v_hist, k_hist)]
@@ -1863,13 +1856,13 @@ if __name__ == "__main__":
                         }
                         
                         scene_info = {
-                            'tl_state': 'none',  # TODO: 从环境获取
-                            'speed_limit_mps': 10.0,  # TODO: 从地图获取
+                            'tl_state': 'none',  
+                            'speed_limit_mps': 10.0,  
                             'stopline_distance_m': None
                         }
                         
                         if use_cot_hodc:
-                            # === Mode C CoT+HODC架构 ===
+                            # === Mode C CoT+HODC===
                             # Stage 1-3: Scene Understanding (复用Mode B的CoT)
                             key_frames = select_frames_for_vlm(obs_images, keep=3)
                             
@@ -1889,7 +1882,7 @@ if __name__ == "__main__":
                             intent_description = DescribeOrUpdateIntent(key_frames, prev_intent=prev_intent, args=args)
                             prev_intent = intent_description
                             
-                            # 设置变量以供后续日志保存
+                            # Set variables for subsequent log storage
                             scene_desc = scene_description
                             object_desc = object_description
                             updated_intent = intent_description
@@ -1911,7 +1904,7 @@ if __name__ == "__main__":
                             print(f"[VLM] Frame {i}: Generated prediction (CoT+HODC 5-stage)")
                             
                         else:
-                            # === Mode C v2简化架构 ===
+                            # === Mode C v2Simplified Architecture ===
                             result = generate_mode_c_prediction(
                                 vlm_inference_fn=vlm_inference,
                                 images=obs_images[-3:],  # [front_last, bev_mid, bev_last]
@@ -1921,7 +1914,6 @@ if __name__ == "__main__":
                                 args=args
                             )
                             
-                            # v2模式没有显式CoT描述
                             scene_desc = "N/A (v2 mode)"
                             object_desc = "N/A (v2 mode)"
                             updated_intent = "N/A (v2 mode)"
@@ -1932,13 +1924,13 @@ if __name__ == "__main__":
                         last_pred = result
                         total_inference_time += (_last_api_duration if '_last_api_duration' in globals() else 0.0)
                     
-                    # 提取[v,k] pairs
+                    # Extract [v,k] pairs
                     speed_curvature_pred = result['pairs']
                     constraints = result.get('constraints', {})
                     reasoning = result.get('reasoning', '')
                     semantic_cmd = result.get('semantic_command', {})
                     
-                    # 根据实际执行的模式显示正确的日志
+                    # Display the correct logs based on the actual execution mode.
                     if use_cache:
                         print(f"[CACHE] Semantic: {semantic_cmd.get('maneuver')} ({semantic_cmd.get('curvature_hint')}) → {len(speed_curvature_pred)} pairs")
                     elif use_cot_hodc:
@@ -1946,34 +1938,28 @@ if __name__ == "__main__":
                     else:
                         print(f"[C-MODE v2] Semantic: {semantic_cmd.get('maneuver')} ({semantic_cmd.get('curvature_hint')}) → {len(speed_curvature_pred)} pairs")
                     
-                    # 应用软约束
                     tl_state = scene_info.get('tl_state', 'none')
                     speed_curvature_pred = apply_soft_constraints(speed_curvature_pred, constraints, tl_state)
                     
-                    # 标记为使用了HODC（用于后续逻辑）
-                    hodc_constraints = None  # v2不需要复杂的hodc_constraints
+                    hodc_constraints = None  
                     
-                    # 跳过旧的解析逻辑
+              
                     if False:
-                        # === 旧的C模式解析逻辑（已禁用） ===
+                    
                         speed_curvature_pred = []
                         if isinstance(prediction, list):
                             speed_curvature_pred = [[float(v), float(k) / 100.0] for v, k in prediction][:10]
                         else:
-                            # 尝试JSON解析
                             try:
                                 obj = _safe_json_loads(str(prediction))
                                 pairs = None
-                                if isinstance(obj, dict):
-                                    # 尝试多种键名
+                                if isinstance(obj, dict):   
                                     for key in ("pairs", "plan", "trajectory", "vk", "data", "motion"):
                                         if key in obj and isinstance(obj[key], list):
                                             pairs = obj[key]
-                                            break
-                                # 如果直接是数组
+                                            break 
                                 if pairs is None and isinstance(obj, list):
                                     pairs = obj
-                                
                                 if isinstance(pairs, list):
                                     for it in pairs[:10]:
                                         if isinstance(it, (list, tuple)) and len(it) >= 2:
@@ -1983,29 +1969,27 @@ if __name__ == "__main__":
                                 print(f"[C-MODE] Parsed {len(speed_curvature_pred)} pairs from VLM output")
                             except Exception as e:
                                 print(f"[C-MODE] JSON parse error: {e}")
-                            
-                            # 回退到正则
                             if len(speed_curvature_pred) == 0:
                                 coordinates = re.findall(r"\[([-+]?\d*\.?\d+),\s*([-+]?\d*\.?\d+)\]", str(prediction))
                                 if coordinates:
                                     speed_curvature_pred = [[float(v), float(k) / 100.0] for v, k in coordinates][:10]
                                     print(f"[C-MODE] Regex fallback: parsed {len(speed_curvature_pred)} pairs")
                         
-                        # === 兜底：长度不足10 或 曲率全为0 ===
+                        # === Fallback: Length less than 10 or all curvatures equal to 0 ===
                         needs_fallback = (len(speed_curvature_pred) < 10) or (len(speed_curvature_pred) > 0 and all(abs(k) < 1e-6 for _, k in speed_curvature_pred))
                         if needs_fallback:
                             print(f"[C-MODE] Triggering fallback: len={len(speed_curvature_pred)}, all_zero_k={all(abs(k) < 1e-6 for _, k in speed_curvature_pred) if len(speed_curvature_pred) > 0 else False}")
-                            # 清空并重新生成
+                            # Clear and regenerate
                             speed_curvature_pred = []
-                            # 用HODC bounds生成保守轨迹
+                            # Generate conservative trajectories using HODC bounds
                             v_bounds = hodc_constraints.get("v_bounds", [[0, 0, 8.0]] * 10)
                             k_bounds = hodc_constraints.get("k_bounds", [[0, -0.05, 0.05]] * 10)
-                            # 曲率钟形模板（中段稍高，前后收敛）
+                            # Curved bell-shaped template (slightly higher in the middle, tapering toward the front and back)
                             bell = [0.0, 0.3, 0.6, 0.9, 1.0, 0.9, 0.6, 0.3, 0.1, 0.0]
                             for idx in range(10):
                                 vb = v_bounds[idx] if idx < len(v_bounds) else [0, 0, 8.0]
                                 kb = k_bounds[idx] if idx < len(k_bounds) else [0, -0.05, 0.05]
-                                # 鲁棒解包：支持 [t,vmin,vmax] 或 [vmin,vmax]
+                                # Robust unpacking: Supports [t, vmin, vmax] or [vmin, vmax]
                                 if len(vb) == 3:
                                     vmin, vmax = vb[1], vb[2]
                                 elif len(vb) == 2:
@@ -2020,8 +2004,8 @@ if __name__ == "__main__":
                                 else:
                                     kmin, kmax = -0.05, 0.05
                                 
-                                v = min(max(2.0, 0.5*(vmin+vmax)), 8.0)  # 最小2.0 m/s
-                                # 取几何中值再乘bell
+                                v = min(max(2.0, 0.5*(vmin+vmax)), 8.0) 
+                                # Take the geometric mean and multiply by Bell
                                 k_mid = 0.5*(kmin + kmax)
                                 k = np.clip(k_mid * bell[idx], kmin, kmax)
                                 speed_curvature_pred.append([float(v), float(k)])
@@ -2031,11 +2015,8 @@ if __name__ == "__main__":
                         if len(speed_curvature_pred) == 0:
                             print("[C-MODE] Failed to parse any v,k pairs - skipping frame")
                             continue
-                    # else块已删除（旧的prediction变量不再使用）
-                    
-                    # v2: speed_curvature_pred已经在前面设置好了，直接使用
                     print(f"[DEBUG] Parsed v,k: {speed_curvature_pred[:3]}")
-                    # C模式使用'c_semantic'模式，减少对VLM生成曲率的削弱
+                    # C mode employs the ‘c_semantic’ pattern to reduce the weakening of curvature generated by the VLM.
                     speed_curvature_pred = sanitize_curvature_scaled_seq(speed_curvature_pred, mode='c_semantic')
                     speed_curvature_pred = _inject_turn_template_if_flat(speed_curvature_pred, hodc_constraints)
                     
@@ -2046,7 +2027,7 @@ if __name__ == "__main__":
                         print("[WARNING] k_std < 1e-3, curvature too flat - may need geometry bounds")
                     print(f"[SANITY] k_head mean={float(np.mean(k_values[:6])):.4f}, std={k_std:.4f}")
                     
-                    # ---- 立刻把 v/k 转为世界坐标系下的预测轨迹 ----
+                    # Immediately convert v/k to the predicted trajectory in the world coordinate system 
                     pred_len = min(FUT_LEN, len(speed_curvature_pred))
                     pred_speeds = np.array([p[0] for p in speed_curvature_pred[:pred_len]], dtype=np.float32)
                     pred_curvatures_real = np.array([p[1] for p in speed_curvature_pred[:pred_len]], dtype=np.float32)
@@ -2060,17 +2041,15 @@ if __name__ == "__main__":
                         pred_len,
                     )
 
-                    # 现在再做关键体过滤就安全了
                     critical_agents = filter_critical_agents(agents_states, pred_traj[:, :2])
                     agents_for_check = critical_agents
                     
-                    # 如果要做open-loop评测，在做任何安全干预之前把eval_traj拿出来
                     if getattr(args, "eval_pre_safety_openloop", False):
                         eval_traj = pred_traj[:, :2].copy()
                         eval_traj_source = "pre_safety_open_loop"
                     
-                    # === C-MODE v2: 跳过复杂的HODC融合（已在v2中处理） ===
-                    if False and hodc_constraints:  # 旧逻辑已禁用
+                    # === C-MODE v2:  ===
+                    if False and hodc_constraints:
                         hodc_history = planner_state.get("hodc_history", [])
                         hodc_constraints, scene_consistency = hodc_consistency_filter(hodc_constraints, hodc_history)
                         planner_state["hodc_history"] = hodc_history[-4:] + [hodc_constraints]
@@ -2086,14 +2065,14 @@ if __name__ == "__main__":
                             v_hodc, k_hodc, v_b_ref, k_b_ref, signals, scene_consistency
                         )
                         
-                        # 使用稳健曲率融合（最小带宽/反零化/几何回退），并将k×100转回真实曲率
+                        # Employ robust curvature fusion (minimum bandwidth/anti-zeroing/geometric regression), and convert k×100 back to true curvature
                         for i_sc in range(len(speed_curvature_pred)):
                             if i_sc < len(v_fused) and i_sc < len(k_fused):
                                 try:
                                     lane_topo = (hodc_constraints.get("scene", {}) or {}).get("lane_topology")
                                     v_curr = float(v_fused[i_sc])
                                     k_mean_raw = float(k_fused[i_sc] / 100.0)
-                                    # 用当前窗口估计一个k_std
+                                    # Estimate k_std using the current window
                                     k_head_vals = [kv for _, kv in speed_curvature_pred][:max(3, i_sc+1)]
                                     k_std_est = float(np.std(k_head_vals)) if len(k_head_vals) > 0 else 0.0
                                     k_ema = float(speed_curvature_pred[i_sc][1])
@@ -2137,7 +2116,7 @@ if __name__ == "__main__":
                         k_values = [k for _, k in speed_curvature_pred]
                         signals = get_hodc_signals(hodc_constraints)
                         min_d_to_agents = min(np.linalg.norm(a["pos_xy"] - np.array(obs_ego_traj_world[-1][:2])) for a in agents_for_check) if agents_for_check else None
-                        last_S = planner_state.get("last_S")  # ✅ 修复：dict.get
+                        last_S = planner_state.get("last_S")  
                         if not getattr(args, "eval_pre_safety_openloop", False):
                             v_values = apply_length_boost(v_values, k_values, v_bounds, signals, min_d_to_agents, last_S)
                             for j, v in enumerate(v_values):
@@ -2194,7 +2173,7 @@ if __name__ == "__main__":
                             p[1] = float(np.clip(p[1], -0.055, 0.055))
                 
                 else:
-                    # B模式：原始三件套
+                    # Mode B: Original Three-Piece Set
                     print("[B-MODE] Using original three-stage prompting")
                     
                     if i % K == 0:
@@ -2302,13 +2281,10 @@ if __name__ == "__main__":
                         atan2(obs_ego_velocities[-1][1], obs_ego_velocities[-1][0]),
                         pred_len,
                     )
-                    # ==== Open-loop 评测（在安全干预前锁定评测轨迹） ====
                     if getattr(args, "eval_pre_safety_openloop", False) and eval_traj is None:
                         eval_traj = pred_traj[:, :2].copy()
                         eval_traj_source = "pre_safety_open_loop"
-                        
-                        # 在安全干预前检测碰撞（用于统计）
-                        # 根据当前曲率确定安全半径
+
                         k_hist_abs_eval = abs(float(obs_ego_curvatures[-1]))
                         if k_hist_abs_eval < 0.01:
                             eval_base_radius, eval_speed_gain = 1.1, 0.08
@@ -2333,13 +2309,13 @@ if __name__ == "__main__":
                         except Exception as e:
                             print(f"[ALIGN] log failed: {e}")
 
-                    # 关键agent过滤：只对与ego轨迹有交叉风险的agent进行避让
+                    # Key agent filtering: Only perform avoidance maneuvers for agents posing collision risks with the ego trajectory.
                     critical_agents = filter_critical_agents(agents_states, pred_traj[:, :2])
                     print(f"[planner] Critical agents: {len(critical_agents)}/{len(agents_states)} (trajectory intersection risk)")
 
                     agents_for_check = critical_agents if len(critical_agents) > 0 else []
 
-                    # 统一默认值，避免未定义引用
+                    # Unify default values to avoid undefined references.
                     collision_detected = False
                     brake_needed = False
                     consecutive_unsafe = planner_state.get("consecutive_unsafe_frames", 0)
@@ -2467,8 +2443,7 @@ if __name__ == "__main__":
                     pred_curvatures_real[half_len:] = alpha * pred_curvatures_real[half_len:] + (1 - alpha) * k_hist
                     
                     print(f"[planner] Segmented curvature recovery: hist={k_hist:.3f}, mean={np.mean(pred_curvatures_real):.3f}")
-                    
-                    # 初始化pred_traj
+                
                     if pred_traj is None:
                         pred_traj = np.zeros((pred_len, 3))
                     
@@ -2550,7 +2525,7 @@ if __name__ == "__main__":
                     img = draw_traj_on_bev(img, pred_traj[:, :2], origin_xy, yaw_deg_last, args.bev_extent, args.bev_res, color=(0, 0, 255), thickness=2)
 
             else:
-                # Mode A: 前视模式 (Front-view + CoT)
+                # Mode A: Front-view Mode (Front-view + CoT)
                 print("[planner] Mode A: Front-view with CoT")
 
                 if i % K != 0 and last_pred is not None:
@@ -2564,7 +2539,7 @@ if __name__ == "__main__":
                         obs_images, obs_ego_traj_world, obs_ego_velocities, obs_ego_curvatures, prev_intent, args=args
                     )
                     last_pred = prediction
-                    # Mode A现在也有CoT三阶段 + GenerateMotion = 4次API调用
+        
                     total_api_calls += 4  # SceneDescription + DescribeObjects + DescribeOrUpdateIntent + GenerateMotion
                     print(f"[VLM] Frame {i}: Generated new prediction (4 API calls: CoT×3 + Motion×1)")
 
@@ -2633,7 +2608,6 @@ if __name__ == "__main__":
                     img, pred_traj.tolist(), obs_camera_params[-1], obs_ego_poses[-1], color=(255, 0, 0), args=args
                 )
 
-            # 评测 ADE/FDE —— ✅ 统一使用 eval_traj（若有）
             if pred_traj is None:
                 print(f"[WARNING] pred_traj is None at frame {i}, skipping ADE/FDE calculation")
                 continue
@@ -2673,7 +2647,6 @@ if __name__ == "__main__":
                 ade3s = float(np.mean(np.linalg.norm(gt3 - pr3, axis=1)))
             ade3s_list.append(ade3s)
 
-            # 保存产物
             if args.plot:
                 cam_images_sequence.append(img.copy())
                 cv2.imwrite(f"{out_dir}/{name}_{i}_front_cam.jpg", img)
@@ -2703,7 +2676,6 @@ if __name__ == "__main__":
                         f.write(f"Final Displacement Error: {fde}\n")
                     f.write(f"Raw Prediction: {speed_curvature_pred}\n")
 
-        # 场景汇总
         mean_ade1s = float(np.mean(ade1s_list)) if ade1s_list else None
         mean_ade2s = float(np.mean(ade2s_list)) if ade2s_list else None
         mean_ade3s = float(np.mean(ade3s_list)) if ade3s_list else None
@@ -2791,7 +2763,6 @@ if __name__ == "__main__":
 
         print(f" Results saved successfully!")
         
-        # 添加到全局统计
         if mean_ade1s is not None:
             all_scenes_ade1s.append(mean_ade1s)
         if mean_ade2s is not None:
@@ -2818,7 +2789,6 @@ if __name__ == "__main__":
             'frames': total_frames
         }
         
-        # 添加smoothness metrics（如果有）
         if pred_smoothness:
             scene_detail['smoothness'] = {
                 'velocity_cv': pred_smoothness.get('velocity_cv'),
@@ -2844,12 +2814,9 @@ if __name__ == "__main__":
                 f.write(f"- ADE 3s: {mean_ade3s:.3f}\n")
             if avg_ade is not None:
                 f.write(f"- Average ADE: {avg_ade:.3f}\n")
-
-        # （已移除 nuboard 数据导出）
         if args.plot and (not args.no_video) and cam_images_sequence:
             WriteImageSequenceToVideo(cam_images_sequence, f"{out_dir}/{name}")
     
-    # ========== 所有场景处理完毕，输出全局统计 ==========
     print("\n" + "="*80)
     print(" ALL SCENES COMPLETED - OVERALL STATISTICS")
     print("="*80)
@@ -2884,7 +2851,6 @@ if __name__ == "__main__":
         std_traffic = float(np.std(all_scenes_traffic_rule_rate))
         print(f"🚦 Traffic rule rate (avg): {global_traffic:.3f} ± {std_traffic:.3f} ({global_traffic*100:.1f}%)")
     
-    # 计算并输出计算效率统计
     if all_scenes_api_calls and all_scenes_frames:
         total_api = sum(all_scenes_api_calls)
         total_frames_count = sum(all_scenes_frames)
@@ -2905,7 +2871,6 @@ if __name__ == "__main__":
         elif args.ablation == 'C' and args.use_cot_hodc:
             print(f"  Mode C: ~5 API calls/frame (CoT → HODC → Trajectory)")
     
-    # 计算并输出smoothness metrics平均值
     if scene_details:
         smoothness_metrics = {
             'velocity_cv': [],
@@ -2934,13 +2899,11 @@ if __name__ == "__main__":
     
     print("="*80)
     
-    # ========== 场景排名分析 ==========
     if scene_details:
         print("\n" + "="*80)
         print("📈 SCENE PERFORMANCE RANKING (for case study analysis)")
         print("="*80)
         
-        # 按FDE排序（越低越好）
         valid_scenes = [s for s in scene_details if s['fde'] is not None]
         if valid_scenes:
             sorted_by_fde = sorted(valid_scenes, key=lambda x: x['fde'])
@@ -2965,14 +2928,13 @@ if __name__ == "__main__":
                     s = scene['smoothness']
                     print(f"   Smoothness: jerk={s.get('jerk_mean', 0):.4f}, curvature={s.get('curvature_mean', 0):.4f}, score={s.get('smoothness_score', 0):.4f}")
             
-            # 按Collision排序（越低越好）
             sorted_by_collision = sorted(valid_scenes, key=lambda x: x['collision_rate'])
             perfect_scenes = [s for s in sorted_by_collision if s['collision_rate'] == 0.0]
             
             if perfect_scenes:
                 print(f"\n {len(perfect_scenes)} SCENES WITH ZERO COLLISION RATE:")
                 print("-"*80)
-                for scene in perfect_scenes[:5]:  # 最多显示5个
+                for scene in perfect_scenes[:5]:  
                     print(f"   {scene['name']:<15s} FDE: {scene['fde']:.3f} | ADE@3s: {scene['ade3s']:.3f}")
             
             print("\n Recommendation for paper case studies:")
@@ -2983,11 +2945,9 @@ if __name__ == "__main__":
                 print(f"   • Safety showcase: {safe_scene['name']} (0% collision, FDE={safe_scene['fde']:.3f})")
     
     print("\n" + "="*80)
-    
-    # 保存全局统计到文件
+
     valid_scenes_for_summary = [s for s in scene_details if s['fde'] is not None]
     
-    # 计算smoothness metrics的全局统计
     smoothness_summary = {}
     if scene_details:
         smoothness_metrics_data = {
@@ -3012,7 +2972,6 @@ if __name__ == "__main__":
                 smoothness_summary[f"{key}_mean"] = float(np.mean(values))
                 smoothness_summary[f"{key}_std"] = float(np.std(values))
     
-    # 计算效率统计
     efficiency_stats = {}
     if all_scenes_api_calls and all_scenes_frames:
         total_api = sum(all_scenes_api_calls)
@@ -3040,9 +2999,9 @@ if __name__ == "__main__":
         "collision_rate_std": float(np.std(all_scenes_collision_rate)) if all_scenes_collision_rate else None,
         "traffic_rule_rate_mean": float(np.mean(all_scenes_traffic_rule_rate)) if all_scenes_traffic_rule_rate else None,
         "traffic_rule_rate_std": float(np.std(all_scenes_traffic_rule_rate)) if all_scenes_traffic_rule_rate else None,
-        "efficiency": efficiency_stats,  # 计算效率统计
-        "smoothness": smoothness_summary,  # 全局smoothness统计
-        "scene_details": scene_details,  # 保存所有场景详情
+        "efficiency": efficiency_stats,  
+        "smoothness": smoothness_summary,  
+        "scene_details": scene_details,  
         "best_scenes": sorted(valid_scenes_for_summary, key=lambda x: x['fde'])[:3] if valid_scenes_for_summary else [],
         "worst_scenes": sorted(valid_scenes_for_summary, key=lambda x: x['fde'])[-3:][::-1] if valid_scenes_for_summary else [],
         "hodc_stats": hodc_stats if args.ablation == 'C' and args.use_cot_hodc else None  # HODC++统计
