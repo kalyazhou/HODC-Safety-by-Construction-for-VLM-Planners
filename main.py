@@ -82,7 +82,7 @@ Return ONLY the JSON."""
         )
         return _json.loads(res)
     except Exception:
-        return prev_json  # 失败就沿用
+        return prev_json  
 
 
 def detect_novelty(scene_desc, object_desc, intent_desc, prev_scene, prev_objects, prev_intent):
