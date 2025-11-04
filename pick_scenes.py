@@ -6,36 +6,40 @@ from collections import Counter
 import argparse
 import math
 
-OBS_RADIUS_M = 35.0        # 统计附近目标的半径
-CURV_WIN = 15              # 用于估算曲率的窗口（帧）
-DT = 0.5                   # 帧间隔 s（CAM_FRONT 采样差不多 0.5s）
+OBS_RADIUS_M = 35.0        # Radius to count nearby objects (meters)
+CURV_WIN = 15              # Window length (frames) for curvature estimation
+DT = 0.5                   # Frame interval in seconds (CAM_FRONT is ~0.5 s)
 
 PEDE_LABELS = ('human.pedestrian',)
 CYCLE_LABELS = ('vehicle.bicycle', 'vehicle.motorcycle')
 VEH_LABEL = 'vehicle.'
-TL_LABEL  = 'traffic_light'  # NuScenes 类别里就叫这个
+TL_LABEL  = 'traffic_light'  # Category name as defined in NuScenes
 
 def est_curvature(poses_xy):
-    if len(poses_xy) < 3: 
-        return 0.0
-    # 简单曲率近似：用三点外接圆半径估算
+    """Estimate curvature statistics from a sequence of (x, y) ego positions."""
+    if len(poses_xy) < 3:
+        # Not enough points to estimate curvature; return zeros
+        return 0.0, 0.0
+
+    # Quick curvature approximation: use the circumcircle radius of 3 consecutive points
     curvs = []
-    for i in range(1, len(poses_xy)-1):
-        x1,y1 = poses_xy[i-1]
-        x2,y2 = poses_xy[i]
-        x3,y3 = poses_xy[i+1]
-        a = math.hypot(x2-x1, y2-y1)
-        b = math.hypot(x3-x2, y3-y2)
-        c = math.hypot(x3-x1, y3-y1)
-        s = 0.5*(a+b+c)
-        area = max(1e-6, math.sqrt(max(0.0, s*(s-a)*(s-b)*(s-c))))
-        R = (a*b*c) / (4*area) if area>0 else 1e6
-        k = 1.0/max(R,1e-6)
+    for i in range(1, len(poses_xy) - 1):
+        x1, y1 = poses_xy[i - 1]
+        x2, y2 = poses_xy[i]
+        x3, y3 = poses_xy[i + 1]
+        a = math.hypot(x2 - x1, y2 - y1)
+        b = math.hypot(x3 - x2, y3 - y2)
+        c = math.hypot(x3 - x1, y3 - y1)
+        s = 0.5 * (a + b + c)
+        area = max(1e-6, math.sqrt(max(0.0, s * (s - a) * (s - b) * (s - c))))
+        R = (a * b * c) / (4 * area) if area > 0 else 1e6
+        k = 1.0 / max(R, 1e-6)
         curvs.append(k)
     return float(np.mean(curvs)), float(np.std(curvs))
 
 def score_scene(nusc, scene):
-    # 收集每帧 ego 位姿与附近目标分布
+    """Score a scene by traffic density, presence of lights, curvature variation, and night condition."""
+    # Collect per-frame ego poses and counts of nearby objects
     token = scene['first_sample_token']
     poses_xy = []
     near_counts = Counter()
@@ -50,13 +54,13 @@ def score_scene(nusc, scene):
         poses_xy.append((px, py))
         timestamps.append(pose['timestamp'])
 
-        # 统计 35m 内的目标（行人、两轮、车辆）
+        # Count objects within 35 m (pedestrians, cyclists, vehicles)
         cnt_ped = cnt_cyc = cnt_veh = 0
         for ann_tk in sample['anns']:
             ann = nusc.get('sample_annotation', ann_tk)
             cx, cy = ann['translation'][:2]
-            if np.hypot(cx-px, cy-py) <= OBS_RADIUS_M:
-                # 安全获取类别信息
+            if np.hypot(cx - px, cy - py) <= OBS_RADIUS_M:
+                # Safely retrieve category name
                 try:
                     if 'category_token' in ann:
                         cat = nusc.get('category', ann['category_token'])['name']
@@ -67,7 +71,7 @@ def score_scene(nusc, scene):
                         continue
                 except (KeyError, TypeError):
                     continue
-                
+
                 if cat.startswith(TL_LABEL):
                     has_tl = True
                 if any(cat.startswith(x) for x in PEDE_LABELS):
@@ -82,22 +86,22 @@ def score_scene(nusc, scene):
 
         token = sample['next']
 
-    # 曲率特征（弯道/变道潜力）
+    # Curvature features (curve / lane-change tendency)
     curv_mu, curv_std = est_curvature(poses_xy)
 
-    # 简单"夜/日"启发：按第一帧时间的小时（UTC）粗分
-    # 真实精确的光照需图像或log里更细字段，这里够用了
+    # Simple day/night heuristic: derive from the hour (UTC) of the first timestamp
+    # For precise lighting, image data or richer log fields would be required; this is a coarse proxy
     hour_utc = int((timestamps[0] // 1_000_000 // 3600) % 24) if timestamps else 12
     is_night = (hour_utc < 6 or hour_utc >= 18)
 
-    # 综合得分（可按你关注点调权重）
+    # Composite difficulty score (tune weights according to your focus)
     score = (
-        0.9*min(near_counts['veh']/50, 1.0) +     # 车流密度
-        1.0*min(near_counts['ped']/10, 1.0) +     # 行人
-        0.6*min(near_counts['cyc']/10, 1.0) +     # 骑行
-        0.8*(1.0 if has_tl else 0.0) +            # 有交通灯
-        0.8*min(curv_std*200, 1.0) +              # 弯道/曲率变化
-        0.5*(1.0 if is_night else 0.0)            # 夜景
+        0.9 * min(near_counts['veh'] / 50, 1.0) +   # Vehicle density
+        1.0 * min(near_counts['ped'] / 10, 1.0) +   # Pedestrians
+        0.6 * min(near_counts['cyc'] / 10, 1.0) +   # Cyclists
+        0.8 * (1.0 if has_tl else 0.0) +            # Traffic lights present
+        0.8 * min(curv_std * 200, 1.0) +            # Curvature variability
+        0.5 * (1.0 if is_night else 0.0)            # Night scenes
     )
 
     tags = []
@@ -110,7 +114,7 @@ def score_scene(nusc, scene):
 
     return dict(
         name=scene['name'],
-        description=scene.get('description','').strip(),
+        description=scene.get('description', '').strip(),
         score=round(float(score), 3),
         veh=near_counts['veh'], ped=near_counts['ped'], cyc=near_counts['cyc'],
         curv_mean=round(curv_mu, 4), curv_std=round(curv_std, 4),
@@ -130,5 +134,7 @@ if __name__ == "__main__":
 
     print("\n=== Top candidates ===")
     for r in recs[:args.topk]:
-        print(f"{r['name']:>10s}  score={r['score']:.3f}  tags={r['tags']}  "
-              f"veh={r['veh']} ped={r['ped']} cyc={r['cyc']}  curv_std={r['curv_std']}  desc={r['description']}")
+        print(
+            f"{r['name']:>10s}  score={r['score']:.3f}  tags={r['tags']}  "
+            f"veh={r['veh']} ped={r['ped']} cyc={r['cyc']}  curv_std={r['curv_std']}  desc={r['description']}"
+        )
