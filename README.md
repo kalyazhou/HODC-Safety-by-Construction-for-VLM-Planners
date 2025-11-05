@@ -19,5 +19,5 @@ HODC++ parsing & constraints: parse_hodc_json(...), apply_hodc_constraints(...),
 
 Safety/comfort layer: collision pre‑check, two‑stage yielding/avoidance, braking hysteresis, curvature limiting/self‑healing, progress floor/arc‑length soft limits, etc.
 
-Evaluation metrics: ADE@{1,2,3}s, FDE, Collision Rate
+Evaluation metrics: ADE@{1,2,3}s, FDE, Collision Rate, etc.
 Visualization & logging: alignment plots, trajectory plots, JSONL results, global statistics aggregation.
